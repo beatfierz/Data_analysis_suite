@@ -1,6 +1,6 @@
 
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
-
+from PyQt5.QtCore import Qt
 from ui.Data_analysis_extraction import TiffViewer
 from ui.panels.file_controls import FileControls
 from ui.panels.intensity_controls import IntensityControls
@@ -8,7 +8,7 @@ from ui.panels.frame_controls import FrameControls
 from ui.panels.peak_controls import PeakControls
 from ui.panels.export_controls import ExportControls
 from utils.settings_manager import SettingsManager
-from PyQt5.QtCore import Qt
+from ui.panels.trace_plot import TracePlotWidget
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -18,6 +18,8 @@ class MainWindow(QMainWindow):
 
         self.settings = SettingsManager()
         self.tiff_viewer = TiffViewer(self.settings)
+        self.trace_plot = TracePlotWidget()
+        self.tiff_viewer.trace_plot_widget = self.trace_plot
 
         file_controls = FileControls(self.tiff_viewer, self)
         intensity_controls = IntensityControls(self.tiff_viewer)
@@ -34,10 +36,12 @@ class MainWindow(QMainWindow):
         right_panel = QVBoxLayout()
         right_panel.addLayout(peak_controls)
         right_panel.addLayout(export_controls)
+        right_panel.addLayout(export_controls)
+        right_panel.addWidget(self.trace_plot)
 
         main_layout = QHBoxLayout()
         main_layout.addLayout(left_panel, stretch=1)
-        main_layout.addLayout(right_panel)
+        main_layout.addLayout(right_panel, stretch=3)
 
         container = QWidget()
         container.setLayout(main_layout)

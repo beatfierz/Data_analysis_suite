@@ -9,7 +9,6 @@ def ExportControls(tiff_viewer):
     timebase_input = QLineEdit("0.1")
     timebase_input.setFixedWidth(50)
     timebase_input.setToolTip("Movie timescale")
-    tiff_viewer.peak_frame_input = timebase_input
     timebase_row.addWidget(QLabel("Movie timescale:"))
     timebase_row.addWidget(timebase_input)
     timebase_row.addStretch()

@@ -10,6 +10,8 @@ from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QCursor
 from utils.peak_detection import fast_peak_find
 from PyQt5.QtWidgets import QFileDialog
 from utils.get_nearest_peak import get_nearest_peak
+from utils.integrate_trace import get_data_from_stack
+from ui.panels.trace_plot import TracePlotWidget
 
 class TiffViewer(QWidget):
     def __init__(self, settings):
@@ -20,6 +22,7 @@ class TiffViewer(QWidget):
         self.min_intensity = 0
         self.max_intensity = 65280
         self.peak_list = []
+        self.current_trace = []
         self.peak_frame_input = None
         self.peak_threshold = None
         self.threshold_slider = QSlider(Qt.Horizontal)
@@ -87,18 +90,19 @@ class TiffViewer(QWidget):
 
     def detect_peaks(self):
         if self.tiff_stack is None:
+            print("No TIFF stack loaded.")
             return
         try:
             idx = int(self.peak_frame_input.text())
-        except:
+            idx = max(0, min(idx, self.tiff_stack.shape[0] - 1))  # clamp to valid range
+        except (ValueError, AttributeError):
+            print("Invalid frame index in peak detection field — using current frame.")
             idx = self.current_frame
-        idx = max(0, min(idx, self.tiff_stack.shape[0] - 1))
         frame = self.tiff_stack[idx]
         self.peak_list.clear()
-        self.peak_list = fast_peak_find(frame, threshold=self.peak_threshold)
+        raw_peaks = fast_peak_find(frame, threshold=self.peak_threshold)
+        self.peak_list = [self._init_peak(x, y) for y, x in raw_peaks]
         print(f"Detected peaks in frame {idx}:")
-        for (x, y) in self.peak_list:
-            print(f"({x}, {y})")
         self.update()
 
     def save_peaklist(self):
@@ -128,7 +132,10 @@ class TiffViewer(QWidget):
 
         data = {
             "metadata": metadata,
-            "peaklist": [[int(y), int(x)] for y, x in self.peak_list]
+            "peaklist": [
+                {"y": int(p["y"]), "x": int(p["x"]), "selected": bool(p.get("selected", False))}
+                for p in self.peak_list
+            ]
         }
 
         with open(path, "w") as f:
@@ -148,7 +155,10 @@ class TiffViewer(QWidget):
             print("Invalid peaklist file.")
             return
 
-        self.peak_list = [tuple(p) for p in data["peaklist"]]
+        self.peak_list = [
+            {"y": int(p["y"]), "x": int(p["x"]), "selected": bool(p.get("selected", False))}
+            for p in data["peaklist"]
+        ]
         meta = data.get("metadata", {})
         print(f"Loaded {len(self.peak_list)} peaks from {path}")
         if meta:
@@ -169,10 +179,20 @@ class TiffViewer(QWidget):
         self.update()
 
     def select_peaks(self):
-        self.update()
+        if not self.peak_list:
+            print("No peaks to select.")
+            return
+
+        self.setCursor(QCursor(Qt.CrossCursor))
+        self.click_mode = "select"
 
     def deselect_peaks(self):
-        self.update()
+        if not self.peak_list:
+            print("No peaks to deselect.")
+            return
+
+        self.setCursor(QCursor(Qt.CrossCursor))
+        self.click_mode = "deselect"
 
     def select_all_peaks(self):
         self.update()
@@ -208,20 +228,55 @@ class TiffViewer(QWidget):
 
         click_x = int(event.pos().x() - offs_x)*scale
         click_y = int(event.pos().y() - offs_y)*scale
-        print(f"Canvas width/height ({scaled_pixmap_width}, {scaled_pixmap_height})")
-        print(f"Width/height ({width}, {height})")
-        print(f"Unscaled click pos ({int(event.pos().x())}, {int(event.pos().y())})")
-        print(f"Offsets X,Y ({offs_x}, {offs_y})")
-        print(f"Scaling factor ({scale})")
+
+        # print(f"Canvas width/height ({scaled_pixmap_width}, {scaled_pixmap_height})")
+        # print(f"Width/height ({width}, {height})")
+        # print(f"Unscaled click pos ({int(event.pos().x())}, {int(event.pos().y())})")
+        # print(f"Offsets X,Y ({offs_x}, {offs_y})")
+        # print(f"Scaling factor ({scale})")
 
         if self.click_mode == "add":
-            self.peak_list.append((click_y, click_x))
+            self.peak_list.append(self._init_peak(click_x, click_y))
             print(f"Added peak at ({click_x}, {click_y})")
+
         elif self.click_mode == "delete":
-            idx, dist = get_nearest_peak(click_x, click_y, self.peak_list)
+            # Convert to tuple list for distance matching
+            index, dist = get_nearest_peak(click_x, click_y, [(p["y"], p["x"]) for p in self.peak_list])
+            if index is not None and dist < 20:
+                removed = self.peak_list.pop(index)
+                print(f"Deleted peak at ({removed['x']}, {removed['y']})")
+
+        elif self.click_mode == "select":
+            idx, dist = get_nearest_peak(click_x, click_y, [(p["y"], p["x"]) for p in self.peak_list])
             if idx is not None and dist < 20:
-                removed = self.peak_list.pop(idx)
-                print(f"Deleted peak at {removed}")
+                self.peak_list[idx]["selected"] = True
+                print(f"Selected peak at ({self.peak_list[idx]['x']}, {self.peak_list[idx]['y']})")
+
+                # Trace extraction
+                trace_values = get_data_from_stack(self.tiff_stack, click_x, click_y, radius=2)
+                self.current_trace = self._init_trace()
+                self.current_trace.update({
+                    "x": click_x,
+                    "y": click_y,
+                    "radius": 2,
+                    "values": trace_values
+                })
+
+                self.trace_plot_widget.plot_trace(trace_values)
+
+            self.click_mode = None
+            self.unsetCursor()
+            self.update()
+
+        elif self.click_mode == "deselect":
+            idx, dist = get_nearest_peak(click_x, click_y, [(p["y"], p["x"]) for p in self.peak_list])
+            if idx is not None and dist < 20:
+                self.peak_list[idx]["selected"] = False
+                print(f"Deselected peak at ({self.peak_list[idx]['x']}, {self.peak_list[idx]['y']})")
+            self.click_mode = None
+            self.unsetCursor()
+            self.update()
+
         self.click_mode = None
         self.unsetCursor()
         self.update()
@@ -250,7 +305,26 @@ class TiffViewer(QWidget):
             scale_y = scaled_pixmap.height() / height
             painter.setPen(QPen(QColor(255, 0, 0), 2))
             radius = self.circle_radius
-            for py, px in self.peak_list:
+            for peak in self.peak_list:
+                py, px = peak["y"], peak["x"]
+                is_selected = peak.get("selected", False)
+                color = QColor(0, 100, 255) if is_selected else QColor(255, 0, 0)
+                painter.setPen(QPen(color, 2))
                 cx = int(px * scale_x) + x_offset
                 cy = int(py * scale_y) + y_offset
                 painter.drawEllipse(cx - radius, cy - radius, 2 * radius, 2 * radius)
+
+    def _init_trace(self):
+        return {
+            "x": None,
+            "y": None,
+            "radius": None,
+            "values": []
+        }
+
+    def _init_peak(self, x, y, selected=False):
+        return {
+            "x": x,
+            "y": y,
+            "selected": selected
+        }
