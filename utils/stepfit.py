@@ -8,7 +8,13 @@ from scipy.ndimage import uniform_filter1d
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from numba import njit
 
-# Define a context object to carry "formerly global" parameters
+# Detection of steps in single-molecule data
+# adapted from TANUJ AGGARWAL, DONATELLO MATERASSI, ROBERT DAVISON, THOMAS HAYS, and MURTI SALAPAKA
+# DOI: 10.1007/s12195-011-0188-5
+# and the Matlab implementation stepfit1
+# http://nanodynamics.ece.umn.edu/
+# https://github.com/SalapakaLab-SIMBioSys
+
 class StepfitContext:
     def __init__(self):
         self.userargs = None
@@ -360,9 +366,6 @@ def viterbistepdetector(y, miny, low, high, param):
     end_idx = np.argmin(cost[:high[-1] - low[-1] + 1])
     est = reconstruction(S, low, end_idx-1, resolution, miny)
     return est, costtrack
-
-from numba import njit
-import numpy as np
 
 @njit(cache=True)
 def viterbi_cost_loop(S, zhat, cost, y, b, a, low, high, miny, resolution,
