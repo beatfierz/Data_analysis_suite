@@ -11,7 +11,7 @@ from utils.peak_detection import fast_peak_find
 from PyQt5.QtWidgets import QFileDialog
 from utils.get_nearest_peak import get_nearest_peak
 from utils.integrate_trace import get_data_from_stack
-from ui.panels.trace_plot import TracePlotWidget
+from utils.stepfit import stepfit
 
 class TiffViewer(QWidget):
     def __init__(self, settings):
@@ -229,12 +229,6 @@ class TiffViewer(QWidget):
         click_x = int(event.pos().x() - offs_x)*scale
         click_y = int(event.pos().y() - offs_y)*scale
 
-        # print(f"Canvas width/height ({scaled_pixmap_width}, {scaled_pixmap_height})")
-        # print(f"Width/height ({width}, {height})")
-        # print(f"Unscaled click pos ({int(event.pos().x())}, {int(event.pos().y())})")
-        # print(f"Offsets X,Y ({offs_x}, {offs_y})")
-        # print(f"Scaling factor ({scale})")
-
         if self.click_mode == "add":
             self.peak_list.append(self._init_peak(click_x, click_y))
             print(f"Added peak at ({click_x}, {click_y})")
@@ -254,15 +248,19 @@ class TiffViewer(QWidget):
 
                 # Trace extraction
                 trace_values = get_data_from_stack(self.tiff_stack, click_x, click_y, radius=2)
+                fit = stepfit(trace_values, 'measnoise', 100, 'passes', 5, 'verbose', 0)
+
                 self.current_trace = self._init_trace()
                 self.current_trace.update({
                     "x": click_x,
                     "y": click_y,
                     "radius": 2,
-                    "values": trace_values
+                    "values": trace_values,
+                    "fit": fit
                 })
 
-                self.trace_plot_widget.plot_trace(trace_values)
+                if hasattr(self, "trace_plot_widget"):
+                    self.trace_plot_widget.plot_trace(trace_values, fitted=fit)
 
             self.click_mode = None
             self.unsetCursor()
@@ -319,7 +317,8 @@ class TiffViewer(QWidget):
             "x": None,
             "y": None,
             "radius": None,
-            "values": []
+            "values": [],
+            "fit": []
         }
 
     def _init_peak(self, x, y, selected=False):

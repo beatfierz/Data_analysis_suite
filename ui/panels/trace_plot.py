@@ -13,9 +13,11 @@ class TracePlotWidget(QWidget):
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-    def plot_trace(self, y_values):
+    def plot_trace(self, y_values, fitted=None):
         self.ax.clear()
         self.ax.plot(y_values, linewidth=0.5)
+        if fitted is not None:
+            self.ax.plot(fitted, linewidth=0.75, color='red')
         self.ax.set_xlabel("Time", fontsize=8)
         self.ax.set_ylabel("Intensity", fontsize=8)
         self.fig.tight_layout()
