@@ -19,4 +19,4 @@ Thumbs.db
 *.bak
 *.swp
 *.~*
-/_test/*.*
+_test/
