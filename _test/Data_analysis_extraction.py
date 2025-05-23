@@ -14,8 +14,12 @@ from utils.integrate_trace import get_data_from_stack
 from utils.stepfit import stepfit
 
 class TiffViewer(QWidget):
+    # this imports the tiff stack
+
     def __init__(self, settings):
         super().__init__()
+        # --- set initial parameters ---
+        # --- GUI params ---
         self.settings = settings
         self.tiff_stack = None
         self.current_frame = 0
@@ -25,28 +29,11 @@ class TiffViewer(QWidget):
         self.current_trace = []
         self.peak_frame_input = None
         self.peak_threshold = None
-        self.threshold_slider = QSlider(Qt.Horizontal)
-        self.threshold_slider.setMinimum(0)
-        self.threshold_slider.setMaximum(65535)
-        self.threshold_slider.setValue(1000)
-        self.threshold_slider.setEnabled(False)  # Disabled until TIFF is loaded
-        self.threshold_slider.valueChanged.connect(self.update_peak_threshold)
+        self.threshold_slider = None
         self.click_mode = None  # "add" or "delete"
-
-        # --- set initial parameters ---
-        # --- GUI params ---
         self.circle_radius = int(self.settings.get("circle_size", 5))
-
-        self.intensity_slider = QSlider(Qt.Horizontal)
-        self.intensity_slider.setMinimum(1)
-        self.intensity_slider.setMaximum(65280)
-        self.intensity_slider.setValue(1000)
-        self.intensity_slider.valueChanged.connect(self.update_display)
-
-        self.frame_slider = QSlider(Qt.Horizontal)
-        self.frame_slider.setMinimum(0)
-        self.frame_slider.setSingleStep(1)
-        self.frame_slider.valueChanged.connect(self.change_frame)
+        self.intensity_slider = None # QSlider(Qt.Horizontal)
+        self.frame_slider = None # QSlider(Qt.Horizontal)
 
     def load_tiff(self):
         start_path = self.settings.get("last_path", ".")
@@ -87,6 +74,14 @@ class TiffViewer(QWidget):
         self.frame_slider.setValue(value)
         self.current_frame = value
         self.update()
+
+    def set_intensity_value(self, val):
+        self.max_intensity = val
+        self.update_display()
+
+    def set_frame_value(self, val):
+        self.current_frame = val
+        self.change_frame()
 
     def detect_peaks(self):
         if self.tiff_stack is None:

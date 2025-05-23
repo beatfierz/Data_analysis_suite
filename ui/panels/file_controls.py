@@ -1,27 +1,44 @@
+from PyQt5.QtWidgets import QWidget, QPushButton, QLabel, QHBoxLayout, QVBoxLayout
+from PyQt5.QtCore import Qt
 
-from PyQt5.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QLabel
+class FileControls(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.controller = None
+        self.parent_window = None
+        self.path_label = QLabel("No file loaded")
+        self.path_label.setStyleSheet("font-style: italic; color: gray")
+        self.load_button = QPushButton("Load TIFF")
+        self.load_button.setMaximumWidth(100)
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.setMaximumWidth(100)
 
-def FileControls(tiff_viewer, parent):
-    load_button = QPushButton("Load TIFF")
-    load_button.setMaximumWidth(100)
+    def init_with_controller(self, controller, parent):
+        self.controller = controller
+        self.parent_window = parent
+        self.init_ui()
 
-    quit_button = QPushButton("Quit")
-    quit_button.setMaximumWidth(100)
-    quit_button.clicked.connect(parent.close)
+    def init_ui(self):
+        # --- Button callbacks ---
+        self.load_button.clicked.connect(self.controller.load_tiff)
+        self.quit_button.clicked.connect(self.parent_window.close)
 
-    path_label = QLabel("No file loaded")
-    path_label.setStyleSheet("font-style: italic; color: gray")
-    tiff_viewer.file_path_label = path_label  # expose to TiffViewer for updates
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.load_button)
+        button_row.addWidget(self.quit_button)
+        button_row.addStretch()
+        button_row.setAlignment(Qt.AlignLeft)
 
-    load_button.clicked.connect(tiff_viewer.load_tiff)
+        # --- Final Layout ---
+        layout = QVBoxLayout()
+        layout.addLayout(button_row)
+        layout.addWidget(self.path_label)
+        layout.addStretch()
+        layout.setAlignment(Qt.AlignTop)
+        self.setLayout(layout)
 
-    button_row = QHBoxLayout()
-    button_row.addWidget(load_button)
-    button_row.addWidget(quit_button)
-    button_row.addStretch()
+    def set_path_label(self, path):
+        self.path_label.setText(path)
 
-    layout = QVBoxLayout()
-    layout.addLayout(button_row)
-    layout.addWidget(path_label)
-
-    return layout
+    def get_path_label(self):
+        return self.path_label.text()

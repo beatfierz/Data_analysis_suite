@@ -1,14 +1,13 @@
-
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
-from PyQt5.QtCore import Qt
-from ui.Data_analysis_extraction import TiffViewer
+from ui.panels.tiff_canvas import TiffCanvas
 from ui.panels.file_controls import FileControls
 from ui.panels.intensity_controls import IntensityControls
 from ui.panels.frame_controls import FrameControls
 from ui.panels.peak_controls import PeakControls
 from ui.panels.export_controls import ExportControls
-from utils.settings_manager import SettingsManager
 from ui.panels.trace_plot import TracePlotWidget
+from utils.settings_manager import SettingsManager
+from ui.data_analysis_gui import DataAnalysisGUI
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -16,32 +15,52 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Data analysis and extraction GUI")
         self.setGeometry(100, 100, 1000, 600)
 
+        # Instantiate core widgets
         self.settings = SettingsManager()
-        self.tiff_viewer = TiffViewer(self.settings)
+        self.canvas = TiffCanvas()
         self.trace_plot = TracePlotWidget()
-        self.tiff_viewer.trace_plot_widget = self.trace_plot
 
-        file_controls = FileControls(self.tiff_viewer, self)
-        intensity_controls = IntensityControls(self.tiff_viewer)
-        frame_controls = FrameControls(self.tiff_viewer)
-        peak_controls = PeakControls(self.tiff_viewer)
-        export_controls = ExportControls(self.tiff_viewer)
+        # Control panels
+        self.file_controls = FileControls()
+        self.intensity_controls = IntensityControls()
+        self.frame_controls = FrameControls()
+        self.peak_controls = PeakControls()
+        self.export_controls = ExportControls()
 
-        left_panel = QVBoxLayout()
-        left_panel.addLayout(file_controls)
-        left_panel.addWidget(self.tiff_viewer, stretch=1)
-        left_panel.addLayout(intensity_controls)
-        left_panel.addLayout(frame_controls)
+        # In a second step, pass all the widgets to the controller
+        self.controller = DataAnalysisGUI(
+            settings=self.settings,
+            canvas=self.canvas,
+            trace_plot=self.trace_plot,
+            file_controls=self.file_controls,
+            intensity_controls = self.intensity_controls,
+            frame_controls=self.frame_controls,
+            peak_controls=self.peak_controls,
+            export_controls=self.export_controls
+        )
 
-        right_panel = QVBoxLayout()
-        right_panel.addLayout(peak_controls)
-        right_panel.addLayout(export_controls)
-        right_panel.addLayout(export_controls)
-        right_panel.addWidget(self.trace_plot)
+        # Phase 4: Let the controls initialize themselves now that controller is known
+        self.file_controls.init_with_controller(self.controller, self)
+        self.intensity_controls.init_with_controller(self.controller)
+        self.frame_controls.init_with_controller(self.controller)
+        self.peak_controls.init_with_controller(self.controller)
+        self.export_controls.init_with_controller(self.controller)
+
+        # Layout left and right side
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(self.file_controls)
+        left_layout.addWidget(self.canvas, stretch=1)
+        left_layout.addWidget(self.intensity_controls)
+        left_layout.addWidget(self.frame_controls)
+
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(self.peak_controls)
+        right_layout.addWidget(self.export_controls)
+        right_layout.addWidget(self.trace_plot)
 
         main_layout = QHBoxLayout()
-        main_layout.addLayout(left_panel, stretch=1)
-        main_layout.addLayout(right_panel, stretch=3)
+        main_layout.addLayout(left_layout, stretch=1)
+        main_layout.addLayout(right_layout, stretch=3)
 
         container = QWidget()
         container.setLayout(main_layout)

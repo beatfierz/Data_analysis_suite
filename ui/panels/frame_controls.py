@@ -1,25 +1,44 @@
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QLineEdit, QSlider
+from PyQt5.QtCore import Qt
 
-from PyQt5.QtWidgets import QLabel, QHBoxLayout, QLineEdit
+class FrameControls(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.controller = None
+        self.input_field = QLineEdit("0")
+        self.input_field.setFixedWidth(50)
+        self.input_field.returnPressed.connect(self.apply_text_input)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setSingleStep(1)
 
-def FrameControls(tiff_viewer):
-    frame_label = QLabel("Frame:")
-    frame_input = QLineEdit("0")
-    frame_input.setFixedWidth(50)
-    frame_input.returnPressed.connect(lambda: update(tiff_viewer, frame_input))
+    def init_with_controller(self, controller):
+        self.controller = controller
+        self.init_ui()
 
-    tiff_viewer.frame_slider.valueChanged.connect(
-        lambda val: frame_input.setText(str(val))
-    )
+    def init_ui(self):
+        self.slider.valueChanged.connect(self.sync_slider)
+        self.slider.valueChanged.connect(self.controller.update_frame)
+        layout = QHBoxLayout()
+        layout.addWidget(QLabel("Frame:"))
+        layout.addWidget(self.slider)
+        layout.addWidget(self.input_field)
+        self.setLayout(layout)
 
-    layout = QHBoxLayout()
-    layout.addWidget(frame_label)
-    layout.addWidget(tiff_viewer.frame_slider)
-    layout.addWidget(frame_input)
-    return layout
+    def set_maximum(self, val):
+        self.slider.setMaximum(val)
 
-def update(tiff_viewer, field):
-    try:
-        val = int(field.text())
-        tiff_viewer.set_frame_value(val)
-    except ValueError:
-        pass
+    def set_slider(self, val):
+        self.slider.setValue(val)
+        self.sync_slider(val)
+
+    def sync_slider(self, val):
+        self.input_field.setText(str(val))
+
+    def apply_text_input(self):
+        try:
+            val = int(self.input_field.text())
+            self.controller.set_frame_value(val)
+            self.controller.frame_slider.setValue(val)
+        except ValueError:
+            pass
