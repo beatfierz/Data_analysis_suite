@@ -41,8 +41,8 @@ class TiffCanvas(QWidget):
         self.peaks = peaks
         self.update()
 
-    def set_intensity_range(self, min_val, max_val):
-        self.min_intensity = min_val
+    def set_intensity_range(self, max_val):
+        # self.min_intensity = min_val
         self.max_intensity = max_val
         self.update()
 

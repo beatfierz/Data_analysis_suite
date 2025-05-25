@@ -3,6 +3,7 @@
 import os
 import json
 import tifffile
+import numpy as np
 from PyQt5.QtWidgets import QFileDialog
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QCursor
@@ -10,9 +11,13 @@ from utils.peak_detection import fast_peak_find
 from utils.get_nearest_peak import get_nearest_peak
 from utils.integrate_trace import get_data_from_stack
 from utils.stepfit import stepfit
+from utils.calc_xcorr_img import calcoffset
+from pathlib import Path
 
 class DataAnalysisGUI:
-    def __init__(self, canvas, trace_plot, settings, file_controls, intensity_controls, frame_controls, peak_controls, export_controls):
+    def __init__(self, canvas, trace_plot, settings, file_controls,
+                 intensity_controls, frame_controls, peak_controls,
+                 export_controls, general_params, cross_corr):
         self.canvas = canvas
         self.trace_plot = trace_plot
         self.file_controls = file_controls
@@ -20,6 +25,8 @@ class DataAnalysisGUI:
         self.intensity_controls = intensity_controls
         self.peak_controls = peak_controls
         self.export_controls = export_controls
+        self.general_params = general_params
+        self.cross_corr = cross_corr
         self.settings = settings
 
         self.tiff_stack = None   # stores loaded Tiff images
@@ -31,18 +38,40 @@ class DataAnalysisGUI:
         self.canvas.set_circle_radius(self.circle_radius)
         self.canvas.trace_callback = self.handle_mouse_click
 
-    def load_tiff(self, label_widget=None):
+        # --- initiate canvas and load placeholder image ---
+        file_path = Path(__file__).parent / "startup_displ.tif"
+        init_img = tifffile.imread(file_path)
+        max_val = init_img.max()
+        self.intensity_controls.set_intensity_value(max_val)
+        self.canvas.set_intensity_range(max_val)
+        init_img = init_img[np.newaxis, ...]
+        self.canvas.set_stack(init_img)
+
+    def load_tiff(self):
         start_path = self.settings.get("last_path", ".")
         path, _ = QFileDialog.getOpenFileName(None, "Open TIFF File", start_path, "TIFF files (*.tif *.tiff)")
         if not path:
             return
         self.settings.set("last_path", os.path.dirname(path))
-        self.tiff_stack = tifffile.imread(path)
+        tiff_img = tifffile.imread(path)
+        max_val = tiff_img.max()
+        self.tiff_stack = tiff_img
+        self.intensity_controls.set_intensity_value(max_val)
+        self.canvas.set_intensity_range(max_val)
+
+        # --- check if this is a single image, if so restructure and switch off frame controls
+        if self.tiff_stack.ndim == 2:
+            self.tiff_stack = self.tiff_stack[np.newaxis, ...]  # Convert to 3D stack with 1 frame
+            self.frame_controls.slider.setEnabled(False)
+        else:
+            self.frame_controls.slider.setEnabled(True)
+
         self.canvas.set_stack(self.tiff_stack)
         self.frame_controls.set_maximum(self.tiff_stack.shape[0] - 1)
         self.threshold = int(max(1, self.tiff_stack[0].max() // 10))
         self.canvas.set_peaks([])
         self.file_controls.set_path_label(path)
+
         # --- set peak detection threshold ---
         d = self.tiff_stack[0]
         self.peak_controls.set_max_threshold(int(d.max()))
@@ -53,9 +82,13 @@ class DataAnalysisGUI:
 
     def update_frame(self, index):
         self.canvas.set_frame(index)
+        self.peak_controls.set_pdet_frame(index)
+        #--- update xcorr plot between first and current frame---
+        offset, xpeak, ypeak, xcorrmat = calcoffset(self.tiff_stack[0], self.tiff_stack[index])
+        self.cross_corr.plot_trace(offset, xpeak, ypeak, xcorrmat)
 
     def update_intensity(self, max_val):
-        self.canvas.set_intensity_range(0, max_val)
+        self.canvas.set_intensity_range(max_val)
 
     def activate_add_peak_mode(self):
         self.canvas.click_mode = "add"
@@ -86,9 +119,13 @@ class DataAnalysisGUI:
         self.canvas.click_mode = "deselect"
 
     def select_all_peaks(self):
+        for peak in self.peak_list:
+            peak["selected"] = True
         self.canvas.update()
 
     def clcAll_peaks(self):
+        for peak in self.peak_list:
+            peak["selected"] = False
         self.canvas.update()
 
     def extract_trace(self):
@@ -99,11 +136,9 @@ class DataAnalysisGUI:
             print("No image loaded.")
             return
 
-        # --- this is actually not correct, need to get frame from peak_controls! ---
-
-        frame_idx = self.canvas.get_current_frame()
+        # --- detect peaks from designated frame ---
+        frame_idx = self.peak_controls.get_pdet_frame()
         frame = self.tiff_stack[frame_idx]
-
 
         self.threshold = self.peak_controls.get_threshold() # just in case, update threshold value
         raw_peaks = fast_peak_find(frame, threshold=self.threshold)
@@ -176,7 +211,10 @@ class DataAnalysisGUI:
             if idx is not None and dist < 20:
                 self.peak_list[idx]["selected"] = True
                 trace = get_data_from_stack(self.tiff_stack, x, y, radius=2)
-                fit = stepfit(trace, 'measnoise', 100, 'passes', 5, 'verbose', 0)
+                if self.export_controls.stepfit_enabled():
+                    fit = stepfit(trace, 'measnoise', 100, 'passes', 5, 'verbose', 0)
+                else:
+                    fit = None
                 self.current_trace = {
                     "x": x,
                     "y": y,

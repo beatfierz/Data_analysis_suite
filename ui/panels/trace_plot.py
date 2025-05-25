@@ -1,15 +1,17 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt5.QtCore import Qt
 
-class TracePlotWidget(QWidget):
+class TraceDisplayPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.fig = Figure(figsize=(2, 2))  # horizontal shape
+        self.fig = Figure(figsize=(3, 3))  # horizontal shape
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111)
         self.ax.tick_params(axis='both', labelsize=8)
         layout = QVBoxLayout()
+        layout.addWidget(QLabel('---Selected trace---'))
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 

@@ -7,8 +7,8 @@ class FrameControls(QWidget):
         self.controller = None
         self.input_field = QLineEdit("0")
         self.input_field.setFixedWidth(50)
-        self.input_field.returnPressed.connect(self.apply_text_input)
         self.slider = QSlider(Qt.Horizontal)
+        self.slider.setEnabled(False)
         self.slider.setMinimum(0)
         self.slider.setSingleStep(1)
 
@@ -19,6 +19,7 @@ class FrameControls(QWidget):
     def init_ui(self):
         self.slider.valueChanged.connect(self.sync_slider)
         self.slider.valueChanged.connect(self.controller.update_frame)
+        self.input_field.returnPressed.connect(self.apply_text_input)
         layout = QHBoxLayout()
         layout.addWidget(QLabel("Frame:"))
         layout.addWidget(self.slider)
@@ -38,7 +39,7 @@ class FrameControls(QWidget):
     def apply_text_input(self):
         try:
             val = int(self.input_field.text())
-            self.controller.set_frame_value(val)
-            self.controller.frame_slider.setValue(val)
+            self.controller.update_frame(val)
+            self.set_slider(val)
         except ValueError:
             pass
