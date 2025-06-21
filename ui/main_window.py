@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self.peak_controls.init_with_controller(self.controller)
         self.export_controls.init_with_controller(self.controller)
         self.general_params.init_with_controller(self.controller)
+        self.trace_plot.init_with_controller(self.controller)
 
         # Layout left and right side
         left_layout = QVBoxLayout()

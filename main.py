@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
 def main():
-    # --- start GUI
+    # --- start GUIe
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

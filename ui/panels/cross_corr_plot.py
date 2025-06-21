@@ -1,5 +1,5 @@
 import numpy as np
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QCheckBox
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import Qt
@@ -8,6 +8,8 @@ class CrossCorrDisplay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         # --- panel for x-crosscorr ---
+        self.xcorr_chk = QCheckBox("Enable xcorr calculation")
+        self.xcorr_chk.setChecked(False)
         self.xfig = Figure(figsize=(1,1))
         self.canvas = FigureCanvas(self.xfig)
         self.canvas.setMinimumSize(300,300)
@@ -18,6 +20,7 @@ class CrossCorrDisplay(QWidget):
 
         layout = QVBoxLayout()
         layout.addWidget(QLabel('---Cross correlation analysis---'))
+        layout.addWidget(self.xcorr_chk)
         layout.addWidget(self.canvas)
         layout.addStretch()
         layout.setAlignment(Qt.AlignTop)
@@ -40,3 +43,6 @@ class CrossCorrDisplay(QWidget):
         axis.set_ylabel("Intensity", fontsize=8)
         self.xfig.tight_layout()
         self.canvas.draw()
+
+    def xcorr_enabled(self):
+        return self.xcorr_chk.isChecked()

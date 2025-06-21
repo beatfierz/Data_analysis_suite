@@ -21,7 +21,7 @@ class TiffCanvas(QWidget):
         self.max_intensity = 65280
         self.min_intensity = 0
         self.peaks = []
-        self.circle_radius = 5
+        self.circle_radius = 0
         self.click_mode = None
         self.trace_callback = None  # assigned externally
 

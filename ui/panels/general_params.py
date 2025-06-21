@@ -1,5 +1,6 @@
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QLineEdit, QPushButton, QHBoxLayout
 from PyQt5.QtCore import Qt
+from utils.frame_skipping import parse_skip_frames
 
 class GeneralParams(QWidget):
     def __init__(self):
@@ -13,15 +14,16 @@ class GeneralParams(QWidget):
         self.txt_timebase_input = QLabel("Movie timescale:")
 
         self.controller = None
-        self.pos_info_input = QLineEdit("NA")
+        self.pos_info_input = QLineEdit("N/A")
         self.pos_info_input.setFixedWidth(50)
-        self.pos_info_input.setToolTip("Specify frames for positional/alignment info")
+        self.pos_info_input.setToolTip("Specify frames for positional/alignment info. Syntax: excluded frames: x1,x2, "
+                                       "...; y1:y2; y2: is the spacing of all frames excluded starting with y1")
         self.txt_pos_info_input = QLabel("Pos. info frame #:")
 
         self.controller = None
-        self.peak_rad_input = QLineEdit("2")
+        self.peak_rad_input = QLineEdit("3")
         self.peak_rad_input.setFixedWidth(50)
-        self.peak_rad_input.setToolTip("Specify frames for positional/alignment info")
+        self.peak_rad_input.setToolTip("Specify radius for peak selection in pixels")
         self.txt_peak_rad_input = QLabel("Peak sel. radius:")
 
     def init_with_controller(self, controller):
@@ -29,6 +31,10 @@ class GeneralParams(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        #--- callbacks ---
+        self.peak_rad_input.returnPressed.connect(self.update_circle_size)
+        self.pos_info_input.returnPressed.connect(self.update_frame_skip)
+
         # --- Timescale input ---
         title_row = QHBoxLayout()
         genparam_row1 = QHBoxLayout()
@@ -64,4 +70,17 @@ class GeneralParams(QWidget):
         return self.pos_info_input.text()
 
     def get_peak_rad(self) -> float:
-        return float(self.peak_rad_input.text())
+        return int(self.peak_rad_input.text())
+
+    def update_circle_size(self):
+        self.controller.circle_radius = int(self.peak_rad_input.text())
+        self.controller.canvas.set_circle_radius(int(self.peak_rad_input.text()))
+        self.controller.canvas.update()
+
+    def update_frame_skip(self):
+        if self.controller.current_trace:
+            skip = parse_skip_frames(self.pos_info_input.text(), self.controller.tiff_stack.shape[0])
+        else:
+            skip = []
+        self.controller.skip_frames = skip
+        return skip

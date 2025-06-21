@@ -4,6 +4,7 @@ import os
 import json
 import tifffile
 import numpy as np
+from pathlib import Path
 from PyQt5.QtWidgets import QFileDialog
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QCursor
@@ -12,7 +13,10 @@ from utils.get_nearest_peak import get_nearest_peak
 from utils.integrate_trace import get_data_from_stack
 from utils.stepfit import stepfit
 from utils.calc_xcorr_img import calcoffset
-from pathlib import Path
+from utils.frame_skipping import process_skip_frames
+from utils.background_noise import estimate_baseline_noise
+from utils.trace_extraction import extract_subimg
+from utils.trace_extraction import fit_psf
 
 class DataAnalysisGUI:
     def __init__(self, canvas, trace_plot, settings, file_controls,
@@ -30,11 +34,18 @@ class DataAnalysisGUI:
         self.settings = settings
 
         self.tiff_stack = None   # stores loaded Tiff images
+        self.curr_frame_noise = 0
+        self.curr_frame_bl = 0
+
+
         self.peak_list = []           # peaklist is stored here
         self.current_trace = {}   # stores values of current trace
+        self.skip_frames = []
+        self.current_trace_bl = 0
+        self.current_trace_noise = 0
 
         self.threshold = 1000
-        self.circle_radius = int(settings.get("circle_size", 5))
+        self.circle_radius = self.general_params.get_peak_rad() # int(settings.get("circle_size", 5))
         self.canvas.set_circle_radius(self.circle_radius)
         self.canvas.trace_callback = self.handle_mouse_click
 
@@ -55,8 +66,9 @@ class DataAnalysisGUI:
         self.settings.set("last_path", os.path.dirname(path))
         tiff_img = tifffile.imread(path)
         max_val = tiff_img.max()
+        self.intensity_controls.set_intensity_range(max_val)
         self.tiff_stack = tiff_img
-        self.intensity_controls.set_intensity_value(max_val)
+        self.intensity_controls.set_intensity_value(int(max_val/5))
         self.canvas.set_intensity_range(max_val)
 
         # --- check if this is a single image, if so restructure and switch off frame controls
@@ -68,14 +80,21 @@ class DataAnalysisGUI:
 
         self.canvas.set_stack(self.tiff_stack)
         self.frame_controls.set_maximum(self.tiff_stack.shape[0] - 1)
-        self.threshold = int(max(1, self.tiff_stack[0].max() // 10))
         self.canvas.set_peaks([])
         self.file_controls.set_path_label(path)
 
+        # --- reinitialize frameskip
+        self.general_params.update_frame_skip()
+
         # --- set peak detection threshold ---
+        # --- first detect baseline and noise
         d = self.tiff_stack[0]
+        self.curr_frame_bl, self.curr_frame_noise = estimate_baseline_noise(d)
+        # --- then link threshold to this
         self.peak_controls.set_max_threshold(int(d.max()))
-        self.peak_controls.set_threshold(max(min(d.max(axis=0).min(), d.max(axis=1).min()), 1e-3))
+        self.threshold = self.curr_frame_bl + self.curr_frame_noise * 5 # int(max(1, self.tiff_stack[0].max() // 10))
+        thrs =  max(min(d.max(axis=0).min(), d.max(axis=1).min()), 1e-3)
+        self.peak_controls.set_threshold(thrs)
 
     def update_peak_threshold(self, value):
         self.threshold = value
@@ -83,9 +102,15 @@ class DataAnalysisGUI:
     def update_frame(self, index):
         self.canvas.set_frame(index)
         self.peak_controls.set_pdet_frame(index)
-        #--- update xcorr plot between first and current frame---
-        offset, xpeak, ypeak, xcorrmat = calcoffset(self.tiff_stack[0], self.tiff_stack[index])
-        self.cross_corr.plot_trace(offset, xpeak, ypeak, xcorrmat)
+        # --- update noise/bg levels and peak detection threshold
+        curr_frame = self.tiff_stack[index]
+        self.curr_frame_bl, self.curr_frame_noise = estimate_baseline_noise(curr_frame)
+        thrs = max(min(curr_frame.max(axis=0).min(), curr_frame.max(axis=1).min()), 1e-3)
+        self.peak_controls.set_threshold(thrs)
+        # --- update xcorr plot between first and current frame, if checked---
+        if self.cross_corr.xcorr_enabled():
+            offset, xpeak, ypeak, xcorrmat = calcoffset(self.tiff_stack[0], curr_frame)
+            self.cross_corr.plot_trace(offset, xpeak, ypeak, xcorrmat)
 
     def update_intensity(self, max_val):
         self.canvas.set_intensity_range(max_val)
@@ -102,7 +127,7 @@ class DataAnalysisGUI:
         self.peak_list.clear()
         self.canvas.update()
 
-    def select_peaks(self):
+    def mouse_select_peaks(self):
         if not self.peak_list:
             print("No peaks to select.")
             return
@@ -128,7 +153,122 @@ class DataAnalysisGUI:
             peak["selected"] = False
         self.canvas.update()
 
+    def txt_select_peaks(self):
+        # --- get trace number ---
+        idx = self.export_controls.get_trace_no()
+        self.peak_sel(idx)
+        self.canvas.update()
+
     def extract_trace(self):
+        # --- parameters ---
+        edge_len = 30
+        pk_shift = 5
+
+        # --- first, get threshold value ---
+        thrs = self.export_controls.get_threshold()
+        # --- some general parameters ---
+        timebase = self.general_params.get_timebase()
+        # --- retrieve list of selected peaks
+        selected_peaks = [peak for peak in self.peak_list if peak.get("selected", False)]
+
+        # --- loop through all the peaks
+        for i, peak in enumerate(selected_peaks):
+            x = peak["x"]
+            y = peak["y"]
+            # process each selected peak
+            print(f"Processing selected peak at ({x}, {y})")
+            # --- extract each one with PSF information
+            trace = get_data_from_stack(self.tiff_stack, x, y, self.general_params.get_peak_rad())
+            # --- process skipframes ---
+            pr_trace = process_skip_frames(trace, self.skip_frames)
+            # --- extract intensity trace ----
+            timepoints = timebase * np.arange(len(pr_trace))
+            self.trace_plot.plot_trace(timepoints, pr_trace)
+            # ----baseline correction? ----
+            self.current_trace_bl, self.current_trace_noise = estimate_baseline_noise(trace)
+            # --- detect binding events via thresholding ---
+            threshold = self.current_trace_bl + thrs
+
+            # --- fit PSF for each event and score
+            # --- find all regions where data > threshold
+            above = trace > threshold
+
+            # Find transitions
+            diff = np.diff(above.astype(int))
+            starts = np.where(diff == 1)[0] + 1
+            ends = np.where(diff == -1)[0] + 1
+
+            # Edge cases: if it starts or ends above threshold
+            if above[0]:
+                starts = np.insert(starts, 0, 0)
+            if above[-1]:
+                ends = np.append(ends, len(trace))
+
+            # Combine to region list
+            regions = list(zip(starts, ends))
+
+            region_data = []
+
+            # now loop through all regions for fitting the PSF
+            for start_idx, end_idx in regions:
+                print(f"  Region {start_idx}–{end_idx - 1}")
+                try:
+                    subimg = extract_subimg(self.tiff_stack, [x, y], edge_len, start_idx, end_idx - 1, frame_skip=None)
+                except Exception as e:
+                    print(f"    Failed to extract subimage: {e}")
+                    continue
+
+                # --- fit gaussian ---
+                popt, pcov, p0 = fit_psf(subimg, edge_len, pk_shift)
+
+                if popt is not None:
+                    A, x0, sigma, y0, B = popt
+                    center_x = edge_len / 2
+                    center_y = edge_len / 2
+                    distance = np.sqrt((x0 - center_x) ** 2 + (y0 - center_y) ** 2)
+
+                    region_entry = {
+                        "start_idx": int(start_idx),
+                        "end_idx": int(end_idx),
+                        "distance_from_center": float(distance),
+                        "sigma": float(sigma),
+                        "fit_params": [float(p) for p in popt],
+                        "fit_guess": [float(p) for p in p0]
+                    }
+                else:
+                    region_entry = {
+                        "start_idx": int(start_idx),
+                        "end_idx": int(end_idx),
+                        "fit_failed": True
+                    }
+
+                region_data.append(region_entry)
+
+                # --- save one JSON file per peak ---
+                peak_entry = {
+                    "peak_x": float(x),
+                    "peak_y": float(y),
+                    "timebase": float(timebase),
+                    "trace_baseline": float(self.current_trace_bl),
+                    "threshold": float(threshold),
+                    "trace": [float(val) for val in pr_trace],
+                    "regions": region_data
+                }
+
+            # Generate default filename based on TIFF filename
+            tiff_path = self.file_controls.get_path_label()
+            if tiff_path and os.path.isfile(tiff_path):
+                base_name = os.path.splitext(os.path.basename(tiff_path))[0]
+                f_name = base_name + f"_tracen_{i}.json"
+                save_path = os.path.join(os.path.dirname(tiff_path), f_name)
+            else:
+                save_path = f"tracen_{i}.json"
+
+            with open(save_path, "w") as f:
+                json.dump(peak_entry, f, indent=2)
+
+            print(f"  → Saved to {save_path}")
+
         self.canvas.update()
 
     def detect_peaks(self):
@@ -197,7 +337,6 @@ class DataAnalysisGUI:
     def handle_mouse_click(self, x, y):
         if self.tiff_stack is None or not self.canvas.click_mode:
             return
-
         if self.canvas.click_mode == "add":
             self.peak_list.append({"x": x, "y": y, "selected": False})
             self.canvas.set_peaks(self.peak_list)
@@ -209,21 +348,7 @@ class DataAnalysisGUI:
         elif self.canvas.click_mode == "select":
             idx, dist = get_nearest_peak(x, y, [(p["y"], p["x"]) for p in self.peak_list])
             if idx is not None and dist < 20:
-                self.peak_list[idx]["selected"] = True
-                trace = get_data_from_stack(self.tiff_stack, x, y, radius=2)
-                if self.export_controls.stepfit_enabled():
-                    fit = stepfit(trace, 'measnoise', 100, 'passes', 5, 'verbose', 0)
-                else:
-                    fit = None
-                self.current_trace = {
-                    "x": x,
-                    "y": y,
-                    "values": trace,
-                    "fit": fit
-                }
-                if self.trace_plot:
-                    self.trace_plot.plot_trace(trace, fitted=fit)
-                self.canvas.set_peaks(self.peak_list)
+                self.peak_sel(idx)
         elif self.canvas.click_mode == "deselect":
             idx, dist = get_nearest_peak(x, y, [(p["y"], p["x"]) for p in self.peak_list])
             if idx is not None and dist < 20:
@@ -232,3 +357,31 @@ class DataAnalysisGUI:
 
         self.canvas.click_mode = None
         self.canvas.unsetCursor()
+
+    def peak_sel(self, idx):
+        self.export_controls.set_trace_no(idx)
+        self.peak_list[idx]["selected"] = True
+        x = self.peak_list[idx]["x"]
+        y = self.peak_list[idx]["y"]
+        # --- get trace data ---
+        trace = get_data_from_stack(self.tiff_stack, x, y, self.general_params.get_peak_rad())
+        self.current_trace_bl, self.current_trace_noise = estimate_baseline_noise(trace)
+        # --- process skipframes ---
+        pr_trace = process_skip_frames(trace, self.skip_frames)
+        # --- generate timebase ---
+        timebase = self.general_params.get_timebase()
+        timepoints = timebase * np.arange(len(pr_trace))
+        if self.export_controls.stepfit_enabled():
+            fit = stepfit(pr_trace, 'measnoise', 100, 'passes', 5, 'verbose', 0)
+        else:
+            fit = None
+        self.current_trace = {
+            "x": x,
+            "y": y,
+            "times": timepoints,
+            "values": pr_trace,
+            "fit": fit
+        }
+        if self.trace_plot:
+            self.trace_plot.plot_trace(timepoints, pr_trace, fitted=fit)
+        self.canvas.set_peaks(self.peak_list)

@@ -41,6 +41,9 @@ class IntensityControls(QWidget):
         except ValueError:
             pass
 
+    def set_intensity_range(self, val):
+        self.intensity_slider.setMaximum(val)
+
     def set_intensity_value(self, val):
         self.intensity_slider.setValue(val)
         self.input_field.setText(str(val))
