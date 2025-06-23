@@ -4,7 +4,7 @@ from scipy.ndimage import median_filter, gaussian_filter
 
 def fast_peak_find(d, threshold=None, filt_size=7, sigma=1.0, edg=3):
     if d.ndim > 2:
-        d = d[:, :, 0]
+        d = d[0, :, :]
     d = d.astype(np.float32)
     if threshold is None:
         threshold = max(min(d.max(axis=0).min(), d.max(axis=1).min()), 1e-3)

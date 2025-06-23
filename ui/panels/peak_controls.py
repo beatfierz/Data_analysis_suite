@@ -9,7 +9,7 @@ class PeakControls(QWidget):
         self.panel_label = QLabel("--- Peak detection and selection ---")
 
         #--- frame for detection ---
-        self.peak_input = QLineEdit("1")
+        self.peak_input = QLineEdit("0")
         self.peak_input.setFixedWidth(50)
         self.peak_input.setToolTip("Frame for peak detection")
         self.peak_input_label = QLabel("Frame for peak detection:")

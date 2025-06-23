@@ -12,8 +12,11 @@ class SettingsManager:
             return
         with open(self.file_path, 'r') as f:
             for line in f:
+                line = line.strip()
+                if not line or line.startswith(("#", ";", "//")):
+                    continue  # Skip empty lines and comments
                 if ',' in line:
-                    key, value = line.strip().split(',', 1)
+                    key, value = line.split(',', 1)
                     self.settings[key.strip()] = value.strip()
 
     def save(self):

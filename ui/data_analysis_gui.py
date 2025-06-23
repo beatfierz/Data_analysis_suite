@@ -5,9 +5,11 @@ import json
 import tifffile
 import numpy as np
 from pathlib import Path
-from PyQt5.QtWidgets import QFileDialog
+from PyQt5.QtWidgets import QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QCursor
+
+from ui.panels import general_params
 from utils.peak_detection import fast_peak_find
 from utils.get_nearest_peak import get_nearest_peak
 from utils.integrate_trace import get_data_from_stack
@@ -15,8 +17,7 @@ from utils.stepfit import stepfit
 from utils.calc_xcorr_img import calcoffset
 from utils.frame_skipping import process_skip_frames
 from utils.background_noise import estimate_baseline_noise
-from utils.trace_extraction import extract_subimg
-from utils.trace_extraction import fit_psf
+from utils.trace_extraction import process_peak
 
 class DataAnalysisGUI:
     def __init__(self, canvas, trace_plot, settings, file_controls,
@@ -34,6 +35,8 @@ class DataAnalysisGUI:
         self.settings = settings
 
         self.tiff_stack = None   # stores loaded Tiff images
+        self.ref_img = None # stores the reference image
+        self.showing_ref = False
         self.curr_frame_noise = 0
         self.curr_frame_bl = 0
 
@@ -50,7 +53,9 @@ class DataAnalysisGUI:
         self.canvas.trace_callback = self.handle_mouse_click
 
         # --- initiate canvas and load placeholder image ---
-        file_path = Path(__file__).parent / "startup_displ.tif"
+        #get startup img
+        startup_img = self.settings.get("startup_img", ".")
+        file_path = Path(__file__).parent / startup_img
         init_img = tifffile.imread(file_path)
         max_val = init_img.max()
         self.intensity_controls.set_intensity_value(max_val)
@@ -58,22 +63,35 @@ class DataAnalysisGUI:
         init_img = init_img[np.newaxis, ...]
         self.canvas.set_stack(init_img)
 
-    def load_tiff(self):
-        start_path = self.settings.get("last_path", ".")
-        path, _ = QFileDialog.getOpenFileName(None, "Open TIFF File", start_path, "TIFF files (*.tif *.tiff)")
-        if not path:
+    def load_ref(self):
+        print("loading reference tiff")
+        ref_img, path = self.load_tiff_file(expect_2d=True)
+        if ref_img is None:
             return
-        self.settings.set("last_path", os.path.dirname(path))
-        tiff_img = tifffile.imread(path)
+
+        self.file_controls.set_ref_path_label(path)
+        max_val = ref_img.max()
+        self.intensity_controls.set_intensity_value(max_val)
+        self.frame_controls.slider.setEnabled(False)
+        ref_img = ref_img[np.newaxis, ...]
+        self.ref_img = ref_img
+        self.canvas.set_stack(self.ref_img)
+        self.showing_ref = True
+
+
+    def load_tiff(self):
+        tiff_img, path = self.load_tiff_file(expect_2d=False)
+        if tiff_img is None:
+            return
+
+        self.tiff_stack = tiff_img
         max_val = tiff_img.max()
         self.intensity_controls.set_intensity_range(max_val)
-        self.tiff_stack = tiff_img
-        self.intensity_controls.set_intensity_value(int(max_val/5))
+        self.intensity_controls.set_intensity_value(int(max_val / 5))
         self.canvas.set_intensity_range(max_val)
 
-        # --- check if this is a single image, if so restructure and switch off frame controls
         if self.tiff_stack.ndim == 2:
-            self.tiff_stack = self.tiff_stack[np.newaxis, ...]  # Convert to 3D stack with 1 frame
+            self.tiff_stack = self.tiff_stack[np.newaxis, ...]
             self.frame_controls.slider.setEnabled(False)
         else:
             self.frame_controls.slider.setEnabled(True)
@@ -82,19 +100,64 @@ class DataAnalysisGUI:
         self.frame_controls.set_maximum(self.tiff_stack.shape[0] - 1)
         self.canvas.set_peaks([])
         self.file_controls.set_path_label(path)
+        self.showing_ref = False
 
-        # --- reinitialize frameskip
+        # initalize Frameskip
         self.general_params.update_frame_skip()
 
-        # --- set peak detection threshold ---
-        # --- first detect baseline and noise
+        # Estimate baseline and noise
         d = self.tiff_stack[0]
         self.curr_frame_bl, self.curr_frame_noise = estimate_baseline_noise(d)
-        # --- then link threshold to this
         self.peak_controls.set_max_threshold(int(d.max()))
-        self.threshold = self.curr_frame_bl + self.curr_frame_noise * 5 # int(max(1, self.tiff_stack[0].max() // 10))
-        thrs =  max(min(d.max(axis=0).min(), d.max(axis=1).min()), 1e-3)
+        thrs = max(min(d.max(axis=0).min(), d.max(axis=1).min()), 1e-3)
         self.peak_controls.set_threshold(thrs)
+        self.threshold = self.curr_frame_bl + self.curr_frame_noise * 5
+
+    def load_tiff_file(self, expect_2d=False):
+            start_path = self.settings.get("last_path", ".")
+            path, _ = QFileDialog.getOpenFileName(None, "Open TIFF File", start_path, "TIFF files (*.tif *.tiff)")
+            if not path:
+                return None, None
+            self.settings.set("last_path", os.path.dirname(path))
+
+            img = tifffile.imread(path)
+
+            if expect_2d:
+                if img.ndim != 2:
+                    QMessageBox.critical(None, "Invalid Image", "Please select a single 2D image (not a stack).")
+                    print("Error: loaded reference image is not 2D.")
+                    return None, None
+
+            return img, path
+
+    def toggle_data_ref(self):
+        print('Toggle data vs reference image')
+
+        if not hasattr(self, "ref_img") or self.ref_img is None:
+            print("No reference image loaded.")
+            return
+
+        if not hasattr(self, "tiff_stack") or self.tiff_stack is None:
+            print("No TIFF stack loaded.")
+            return
+
+        self.showing_ref = not self.showing_ref
+        self.file_controls.drtoggle_button.setText("Show Data" if self.showing_ref else "Show Ref")
+
+        if self.showing_ref:
+            print("Displaying reference image")
+            self.canvas.set_stack(self.ref_img)
+            self.frame_controls.slider.setEnabled(False)  # ref is a single frame
+
+        else:
+            print("Displaying data stack")
+            frame_idx = self.peak_controls.get_pdet_frame()
+            self.canvas.set_stack(self.tiff_stack)
+            self.canvas.set_frame(frame_idx)
+            self.frame_controls.slider.setEnabled(self.tiff_stack.shape[0] > 1)
+
+        # Force canvas update
+        self.canvas.update()
 
     def update_peak_threshold(self, value):
         self.threshold = value
@@ -160,114 +223,16 @@ class DataAnalysisGUI:
         self.canvas.update()
 
     def extract_trace(self):
-        # --- parameters ---
-        edge_len = 30
-        pk_shift = 5
-
-        # --- first, get threshold value ---
+        edge_len = int(self.settings.get("edge_len", "16"))
+        pk_shift = float(self.settings.get("pk_shift", "5"))
         thrs = self.export_controls.get_threshold()
-        # --- some general parameters ---
         timebase = self.general_params.get_timebase()
-        # --- retrieve list of selected peaks
-        selected_peaks = [peak for peak in self.peak_list if peak.get("selected", False)]
+        self.skip_frames = self.general_params.update_frame_skip()
+        selected_peaks = [p for p in self.peak_list if p.get("selected", False)]
 
-        # --- loop through all the peaks
         for i, peak in enumerate(selected_peaks):
-            x = peak["x"]
-            y = peak["y"]
-            # process each selected peak
-            print(f"Processing selected peak at ({x}, {y})")
-            # --- extract each one with PSF information
-            trace = get_data_from_stack(self.tiff_stack, x, y, self.general_params.get_peak_rad())
-            # --- process skipframes ---
-            pr_trace = process_skip_frames(trace, self.skip_frames)
-            # --- extract intensity trace ----
-            timepoints = timebase * np.arange(len(pr_trace))
-            self.trace_plot.plot_trace(timepoints, pr_trace)
-            # ----baseline correction? ----
-            self.current_trace_bl, self.current_trace_noise = estimate_baseline_noise(trace)
-            # --- detect binding events via thresholding ---
-            threshold = self.current_trace_bl + thrs
-
-            # --- fit PSF for each event and score
-            # --- find all regions where data > threshold
-            above = trace > threshold
-
-            # Find transitions
-            diff = np.diff(above.astype(int))
-            starts = np.where(diff == 1)[0] + 1
-            ends = np.where(diff == -1)[0] + 1
-
-            # Edge cases: if it starts or ends above threshold
-            if above[0]:
-                starts = np.insert(starts, 0, 0)
-            if above[-1]:
-                ends = np.append(ends, len(trace))
-
-            # Combine to region list
-            regions = list(zip(starts, ends))
-
-            region_data = []
-
-            # now loop through all regions for fitting the PSF
-            for start_idx, end_idx in regions:
-                print(f"  Region {start_idx}–{end_idx - 1}")
-                try:
-                    subimg = extract_subimg(self.tiff_stack, [x, y], edge_len, start_idx, end_idx - 1, frame_skip=None)
-                except Exception as e:
-                    print(f"    Failed to extract subimage: {e}")
-                    continue
-
-                # --- fit gaussian ---
-                popt, pcov, p0 = fit_psf(subimg, edge_len, pk_shift)
-
-                if popt is not None:
-                    A, x0, sigma, y0, B = popt
-                    center_x = edge_len / 2
-                    center_y = edge_len / 2
-                    distance = np.sqrt((x0 - center_x) ** 2 + (y0 - center_y) ** 2)
-
-                    region_entry = {
-                        "start_idx": int(start_idx),
-                        "end_idx": int(end_idx),
-                        "distance_from_center": float(distance),
-                        "sigma": float(sigma),
-                        "fit_params": [float(p) for p in popt],
-                        "fit_guess": [float(p) for p in p0]
-                    }
-                else:
-                    region_entry = {
-                        "start_idx": int(start_idx),
-                        "end_idx": int(end_idx),
-                        "fit_failed": True
-                    }
-
-                region_data.append(region_entry)
-
-                # --- save one JSON file per peak ---
-                peak_entry = {
-                    "peak_x": float(x),
-                    "peak_y": float(y),
-                    "timebase": float(timebase),
-                    "trace_baseline": float(self.current_trace_bl),
-                    "threshold": float(threshold),
-                    "trace": [float(val) for val in pr_trace],
-                    "regions": region_data
-                }
-
-            # Generate default filename based on TIFF filename
-            tiff_path = self.file_controls.get_path_label()
-            if tiff_path and os.path.isfile(tiff_path):
-                base_name = os.path.splitext(os.path.basename(tiff_path))[0]
-                f_name = base_name + f"_tracen_{i}.json"
-                save_path = os.path.join(os.path.dirname(tiff_path), f_name)
-            else:
-                save_path = f"tracen_{i}.json"
-
-            with open(save_path, "w") as f:
-                json.dump(peak_entry, f, indent=2)
-
-            print(f"  → Saved to {save_path}")
+            print(f"Processing selected peak at ({peak['x']}, {peak['y']})")
+            process_peak(self, peak, i, edge_len, pk_shift, thrs, timebase)
 
         self.canvas.update()
 
@@ -277,8 +242,14 @@ class DataAnalysisGUI:
             return
 
         # --- detect peaks from designated frame ---
-        frame_idx = self.peak_controls.get_pdet_frame()
-        frame = self.tiff_stack[frame_idx]
+        # do this from current index if data is displayed, otherwise from reference image
+        if self.showing_ref:
+            frame = self.ref_img
+            frame_idx = 0
+
+        else:
+            frame_idx = self.peak_controls.get_pdet_frame()
+            frame = self.tiff_stack[frame_idx]
 
         self.threshold = self.peak_controls.get_threshold() # just in case, update threshold value
         raw_peaks = fast_peak_find(frame, threshold=self.threshold)
@@ -367,6 +338,7 @@ class DataAnalysisGUI:
         trace = get_data_from_stack(self.tiff_stack, x, y, self.general_params.get_peak_rad())
         self.current_trace_bl, self.current_trace_noise = estimate_baseline_noise(trace)
         # --- process skipframes ---
+        self.skip_frames = self.general_params.update_frame_skip()
         pr_trace = process_skip_frames(trace, self.skip_frames)
         # --- generate timebase ---
         timebase = self.general_params.get_timebase()

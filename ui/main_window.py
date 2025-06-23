@@ -1,6 +1,4 @@
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
-from pandas.core.methods.describe import select_describe_func
-
 from ui.panels.tiff_canvas import TiffCanvas
 from ui.panels.file_controls import FileControls
 from ui.panels.intensity_controls import IntensityControls

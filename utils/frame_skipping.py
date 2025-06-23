@@ -39,9 +39,7 @@ def parse_skip_frames(skip_str, total_frames):
         print(f"[Error] Failed to parse skip string '{skip_str}': {e}")
         return np.array([], dtype=int)
 
-    # Ensure valid indices only
-    valid_frames = [i for i in skip_frames if 0 <= i < total_frames]
-    return np.array(sorted(set(valid_frames)), dtype=int)
+    return np.array(sorted(i for i in skip_frames if 0 <= i < total_frames), dtype=int)
 
 def process_skip_frames(trace, skip_frames):
     """

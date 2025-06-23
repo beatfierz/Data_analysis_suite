@@ -1,6 +1,11 @@
+import os
 import numpy as np
 from scipy.optimize import curve_fit
 from numba import njit
+import json
+from utils.integrate_trace import get_data_from_stack
+from utils.frame_skipping import process_skip_frames
+from utils.background_noise import estimate_baseline_noise
 
 
 def extract_subimg(img, coord, length, tim_start, tim_end, frame_skip=None):
@@ -99,7 +104,7 @@ def fit_psf(subimg, edge_len, pk_shift):
     A0 = subimg[int(cent), int(cent)]
     x0 = cent
     y0 = cent
-    sigma0 = 10
+    sigma0 = 1
     B0 = np.mean(subimg)
     p0 = [A0, x0, sigma0, y0, B0]
 
@@ -114,4 +119,108 @@ def fit_psf(subimg, edge_len, pk_shift):
         print("Fit did not converge:", e)
         return None, None, p0
 
+def process_peak(self, peak, peak_idx, edge_len, pk_shift, thrs, timebase):
+    x, y = peak["x"], peak["y"]
+    trace = get_data_from_stack(self.tiff_stack, x, y, self.general_params.get_peak_rad())
+    pr_trace = process_skip_frames(trace, self.skip_frames)
+
+    timepoints = timebase * np.arange(len(pr_trace))
+    self.trace_plot.plot_trace(timepoints, pr_trace)
+
+    self.current_trace_bl, self.current_trace_noise = estimate_baseline_noise(trace)
+    threshold = self.current_trace_bl + thrs
+
+    regions = detect_threshold_regions(trace, threshold)
+    x_ref, y_ref = get_reference_fit(self, x, y, edge_len, pk_shift)
+
+    region_data = []
+    for start_idx, end_idx in regions:
+        region_entry = analyze_region(self, x, y, start_idx, end_idx, x_ref, y_ref, edge_len, pk_shift)
+        if region_entry is not None:
+            region_data.append(region_entry)
+
+    peak_entry = {
+        "peak_x": float(x),
+        "peak_y": float(y),
+        "ref_fit_x": float(x_ref),
+        "ref_fit_y": float(y_ref),
+        "timebase": float(timebase),
+        "trace_baseline": float(self.current_trace_bl),
+        "threshold": float(threshold),
+        "trace": [float(val) for val in pr_trace],
+        "regions": region_data
+    }
+
+    tiff_path = self.file_controls.get_path_label()
+    if tiff_path and os.path.isfile(tiff_path):
+        base_name = os.path.splitext(os.path.basename(tiff_path))[0]
+        f_name = base_name + f"_tracen_{peak_idx}.json"
+        save_path = os.path.join(os.path.dirname(tiff_path), f_name)
+    else:
+        save_path = f"tracen_{peak_idx}.json"
+
+    with open(save_path, "w") as f:
+        json.dump(peak_entry, f, indent=2)
+
+    print(f"  → Saved to {save_path}")
+
+def detect_threshold_regions(trace, threshold):
+    above = trace > threshold
+    diff = np.diff(above.astype(int))
+    starts = np.where(diff == 1)[0] + 1
+    ends = np.where(diff == -1)[0] + 1
+
+    if above[0]:
+        starts = np.insert(starts, 0, 0)
+    if above[-1]:
+        ends = np.append(ends, len(trace))
+
+    return list(zip(starts, ends))
+
+def get_reference_fit(self, x, y, edge_len, pk_shift):
+    try:
+        if self.ref_img is not None:
+            ref_source = self.ref_img
+            frame_idx = 0
+        else:
+            frame_idx = self.peak_controls.get_pdet_frame()
+            ref_source = self.tiff_stack[frame_idx]
+
+        ref_subimg = extract_subimg(ref_source, [x, y], edge_len, 0, 0, frame_skip=None)
+        ref_fit, _, _ = fit_psf(ref_subimg, edge_len, pk_shift)
+        if ref_fit is not None:
+            _, x_ref, _, y_ref, _ = ref_fit
+        else:
+            print("Warning: Reference fit failed. Using center of subimage.")
+            x_ref, y_ref = edge_len / 2, edge_len / 2
+    except Exception as e:
+        print(f"Failed to extract or fit reference image: {e}")
+        x_ref, y_ref = edge_len / 2, edge_len / 2
+
+    return x_ref, y_ref
+
+def analyze_region(self, x, y, start_idx, end_idx, x_ref, y_ref, edge_len, pk_shift):
+    print(f"  Region {start_idx}–{end_idx - 1}")
+    try:
+        subimg = extract_subimg(self.tiff_stack, [x, y], edge_len, start_idx, end_idx - 1, frame_skip=None)
+        popt, pcov, p0 = fit_psf(subimg, edge_len, pk_shift)
+
+        if popt is None:
+            return {"start_idx": int(start_idx), "end_idx": int(end_idx), "fit_failed": True}
+
+        A, x0, sigma, y0, B = popt
+        distance = np.sqrt((x0 - x_ref) ** 2 + (y0 - y_ref) ** 2)
+
+        return {
+            "start_idx": int(start_idx),
+            "end_idx": int(end_idx),
+            "distance_from_center": float(distance),
+            "sigma": float(sigma),
+            "fit_params": [float(p) for p in popt],
+            "fit_guess": [float(p) for p in p0]
+        }
+
+    except Exception as e:
+        print(f"    Failed to extract or fit subimage: {e}")
+        return None
 
